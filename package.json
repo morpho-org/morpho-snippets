@@ -20,23 +20,23 @@
   "scripts": {
     "prepare": "husky install",
     "postinstall": "forge install",
-    "build:pkg": "yarn build:hardhat --force && tsc --build ./tsconfig.build.json",
+    "build:pkg": "npx -y pnpm@11.0.9 run build:hardhat --force && tsc --build ./tsconfig.build.json",
     "build:forge": "FOUNDRY_PROFILE=build forge build",
     "build:hardhat": "hardhat compile",
-    "build:blue": "cd lib/morpho-blue/ && yarn build:forge && cd ../..",
-    "build:metamorpho": "cd lib/metamorpho/ && yarn build:forge && cd ../..",
+    "build:blue": "cd lib/morpho-blue/ && npx -y pnpm@11.0.9 run build:forge && cd ../..",
+    "build:metamorpho": "cd lib/metamorpho/ && npx -y pnpm@11.0.9 run build:forge && cd ../..",
     "build:irm": "cd lib/morpho-blue-irm/ && forge build && cd ../..",
-    "cover:summary": "yarn build:blue && yarn build:metamorpho && FOUNDRY_PROFILE=test forge coverage --report summary",
-    "cover:report": "yarn build:blue && yarn build:metamorpho && FOUNDRY_PROFILE=test forge coverage --report lcov",
+    "cover:summary": "npx -y pnpm@11.0.9 run build:blue && npx -y pnpm@11.0.9 run build:metamorpho && FOUNDRY_PROFILE=test forge coverage --report summary",
+    "cover:report": "npx -y pnpm@11.0.9 run build:blue && npx -y pnpm@11.0.9 run build:metamorpho && FOUNDRY_PROFILE=test forge coverage --report lcov",
     "typecheck": "tsc --noEmit",
-    "test:forge": "yarn build:blue && yarn build:metamorpho && FOUNDRY_PROFILE=test forge test",
-    "test:forge:local": "FOUNDRY_MATCH_CONTRACT=LocalTest yarn test:forge",
-    "test:forge:ethereum": "FOUNDRY_MATCH_CONTRACT=EthereumTest yarn test:forge",
+    "test:forge": "npx -y pnpm@11.0.9 run build:blue && npx -y pnpm@11.0.9 run build:metamorpho && FOUNDRY_PROFILE=test forge test",
+    "test:forge:local": "FOUNDRY_MATCH_CONTRACT=LocalTest npx -y pnpm@11.0.9 run test:forge",
+    "test:forge:ethereum": "FOUNDRY_MATCH_CONTRACT=EthereumTest npx -y pnpm@11.0.9 run test:forge",
     "test:hardhat": "hardhat test",
-    "lint": "yarn lint:forge && yarn lint:ts",
+    "lint": "npx -y pnpm@11.0.9 run lint:forge && npx -y pnpm@11.0.9 run lint:ts",
     "lint:ts": "prettier --check pkg",
     "lint:forge": "forge fmt --check",
-    "lint:fix": "yarn lint:forge:fix && yarn lint:ts:fix",
+    "lint:fix": "npx -y pnpm@11.0.9 run lint:forge:fix && npx -y pnpm@11.0.9 run lint:ts:fix",
     "lint:forge:fix": "forge fmt",
     "clean": "hardhat clean && forge clean"
   },
@@ -96,5 +96,9 @@
       "^\\."
     ],
     "importOrderSeparation": true
+  },
+  "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

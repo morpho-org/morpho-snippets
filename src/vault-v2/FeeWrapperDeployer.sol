@@ -64,24 +64,22 @@ import {MAX_MAX_RATE, MAX_FORCE_DEALLOCATE_PENALTY, WAD} from "../../lib/vault-v
 ///   - performanceFee:            Performance fee (in WAD, max 50%). Set to 0 to skip.
 ///   - managementFee:             Management fee (in WAD per second, max ~5% APR). Set to 0 to skip.
 ///   - feeRecipient:              The address receiving both performance and management fees
-///   - abdicateNonCriticalGates:  If true, permanently abdicates 3 gate setters (receiveShares, sendShares,
-///                                receiveAssets) to guarantee non-custodial operation. The sendAssets gate is
-///                                not abdicated because it is non-critical (cannot lock user funds).
-///                                See "Gates & Non-Custodiality" below.
+///   - abdicateNonCriticalGates:  If true, permanently abdicates all four wrapper gate setters and requires the
+///                                child vault to be fully non-custodial. See "Gates & Non-Custodiality" below.
 ///
 /// ---- Gates & Non-Custodiality ----
 ///
 ///   By default, all four gates are set to address(0) (disabled / permissionless).
-///   This means anyone can deposit, withdraw, and transfer freely.
 ///
-///   For NON-CUSTODIAL guarantees: set abdicateNonCriticalGates = true.
-///   This permanently locks the three critical gates to address(0), ensuring no one can ever
-///   restrict deposits, withdrawals, or transfers. This is the recommended setup for DeFi-native
-///   deployments where trustless access matters.
+///   When abdicateNonCriticalGates is true, all four wrapper gate setters are permanently abdicated, and deployment
+///   requires the child vault to have all four gates set to address(0) with all four setters abdicated. During an
+///   in-kind redemption, the depositor deposits assets into the child vault, the wrapper force-deallocates through its
+///   adapter, and the depositor withdraws from the wrapper. The child gates govern the deposit and the later exit from
+///   the child shares, so they must remain open and unchangeable for the wrapper to be fully non-custodial.
 ///
-///   For COMPLIANCE use cases (e.g. KYC/AML allowlists, Fireblocks, institutional mandates):
-///   leave abdicateNonCriticalGates = false. The owner/curator retains the ability to set gates
-///   later via the timelock mechanism. Be aware this makes the vault partially custodial.
+///   For compliance use cases (e.g. KYC/AML allowlists), leave abdicateNonCriticalGates false and configure gates as
+///   required. The wrapper is then not fully non-custodial; the same is true whenever the child vault can still set
+///   gates.
 ///
 /// ---- Roles & Responsibilities ----
 ///
@@ -178,8 +176,9 @@ contract FeeWrapperDeployer {
         uint256 performanceFee; // Performance fee in WAD (e.g. 0.1e18 = 10%). Set to 0 to skip.
         uint256 managementFee; // Management fee in WAD/second (e.g. ~1.585e9 for ~5% APR). Set to 0 to skip.
         address feeRecipient; // Address receiving fees. Required if either fee > 0.
-        // ---- Non-custodiality option ----
-        bool abdicateNonCriticalGates; // If true, abdicate 3 gate setters for non-custodial guarantees.
+        // ---- Gate abdication option ----
+        bool abdicateNonCriticalGates; // If true, abdicate all four wrapper gate setters and require a fully
+        // non-custodial child.
     }
 
     /// @notice Deploys and fully configures a fee wrapper VaultV2.
@@ -205,6 +204,13 @@ contract FeeWrapperDeployer {
             IVaultV2Factory(morphoVaultV2Factory).isVaultV2(config.childVault),
             "FeeWrapperDeployer: child vault must be a Morpho Vault V2"
         );
+
+        if (config.abdicateNonCriticalGates) {
+            require(
+                isChildVaultFullyNonCustodial(config.childVault),
+                "FeeWrapperDeployer: child vault is not fully non-custodial"
+            );
+        }
 
         // Bind the CREATE2 salt to the caller AND the trusted parameters (owner, childVault).
         // This is what makes address squatting / front-running impossible: an attacker copying
@@ -337,22 +343,11 @@ contract FeeWrapperDeployer {
         }
 
         // =====================================================================
-        //  PHASE 8: OPTIONAL NON-CUSTODIAL GATES (curator functions: submit + execute)
+        //  PHASE 8: OPTIONAL GATE ABDICATION (curator functions: submit + execute)
         //
-        //  By default, all gates are address(0) (permissionless). Abdicating the gate
-        //  setters permanently locks them to address(0), guaranteeing that no one can
-        //  ever restrict deposits, withdrawals, or transfers.
-        //
-        //  Three gates are abdicated (the "critical" ones that can lock user funds):
-        //    - setReceiveSharesGate:  controls who can receive shares (deposit/transfer)
-        //    - setSendSharesGate:     controls who can send shares (withdraw/transfer)
-        //    - setReceiveAssetsGate:  controls who can receive assets (withdraw)
-        //
-        //  The fourth gate (setSendAssetsGate) is NOT abdicated because it is non-critical:
-        //  it can only restrict who deposits, but cannot lock existing user funds.
-        //
-        //  If you need compliance gates (KYC/AML), leave abdicateNonCriticalGates = false
-        //  and configure gates later via the curator + timelock mechanism.
+        //  When enabled, permanently abdicate all four wrapper gate setters. Deployment
+        //  requires the child vault's four gates to be open and their setters abdicated.
+        //  Set the flag to false for configurations that need gates for compliance.
         // =====================================================================
 
         if (config.abdicateNonCriticalGates) {
@@ -364,6 +359,9 @@ contract FeeWrapperDeployer {
 
             IVaultV2(vault).submit(abi.encodeCall(IVaultV2.abdicate, (IVaultV2.setReceiveAssetsGate.selector)));
             IVaultV2(vault).abdicate(IVaultV2.setReceiveAssetsGate.selector);
+
+            IVaultV2(vault).submit(abi.encodeCall(IVaultV2.abdicate, (IVaultV2.setSendAssetsGate.selector)));
+            IVaultV2(vault).abdicate(IVaultV2.setSendAssetsGate.selector);
         }
 
         // =====================================================================
@@ -408,5 +406,16 @@ contract FeeWrapperDeployer {
         IVaultV2(vault).setOwner(config.owner);
 
         emit FeeWrapperCreated(vault, msg.sender, config.owner, config.childVault, config.salt);
+    }
+
+    /// @notice Returns whether a child vault's four gates are open and their setters are abdicated.
+    /// @param childVault The child VaultV2 to check.
+    /// @return True only if every gate is address(0) and its setter is abdicated.
+    function isChildVaultFullyNonCustodial(address childVault) public view returns (bool) {
+        IVaultV2 child = IVaultV2(childVault);
+        return child.receiveSharesGate() == address(0) && child.abdicated(IVaultV2.setReceiveSharesGate.selector)
+            && child.sendSharesGate() == address(0) && child.abdicated(IVaultV2.setSendSharesGate.selector)
+            && child.receiveAssetsGate() == address(0) && child.abdicated(IVaultV2.setReceiveAssetsGate.selector)
+            && child.sendAssetsGate() == address(0) && child.abdicated(IVaultV2.setSendAssetsGate.selector);
     }
 }

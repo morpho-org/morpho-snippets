@@ -32,8 +32,7 @@ import {IVaultV2} from "../lib/vault-v2/src/interfaces/IVaultV2.sol";
 ///   export FW_PERFORMANCE_FEE=0                      # WAD, e.g. 100000000000000000 = 10%
 ///   export FW_MANAGEMENT_FEE=0                       # WAD per second
 ///   export FW_FEE_RECIPIENT=0x...                    # required if either fee > 0
-///   export FW_ABDICATE_GATES=false                   # true for non-custodial guarantees
-///
+///   export FW_ABDICATE_GATES=false                   # true requires open, abdicated child gates
 ///   forge script script/DeployFeeWrapper.s.sol:DeployFeeWrapper --rpc-url <rpc> --broadcast
 ///
 /// Run without --broadcast first to see the deterministic address and the full plan (dry run).
@@ -54,6 +53,32 @@ contract DeployFeeWrapper is Script {
             feeRecipient: vm.envOr("FW_FEE_RECIPIENT", address(0)),
             abdicateNonCriticalGates: vm.envOr("FW_ABDICATE_GATES", false)
         });
+
+        IVaultV2 childVault = IVaultV2(config.childVault);
+        address receiveSharesGate = childVault.receiveSharesGate();
+        address sendSharesGate = childVault.sendSharesGate();
+        address receiveAssetsGate = childVault.receiveAssetsGate();
+        address sendAssetsGate = childVault.sendAssetsGate();
+        bool receiveSharesGateAbdicated = childVault.abdicated(IVaultV2.setReceiveSharesGate.selector);
+        bool sendSharesGateAbdicated = childVault.abdicated(IVaultV2.setSendSharesGate.selector);
+        bool receiveAssetsGateAbdicated = childVault.abdicated(IVaultV2.setReceiveAssetsGate.selector);
+        bool sendAssetsGateAbdicated = childVault.abdicated(IVaultV2.setSendAssetsGate.selector);
+        bool childFullyNonCustodial = receiveSharesGate == address(0) && receiveSharesGateAbdicated
+            && sendSharesGate == address(0) && sendSharesGateAbdicated && receiveAssetsGate == address(0)
+            && receiveAssetsGateAbdicated && sendAssetsGate == address(0) && sendAssetsGateAbdicated;
+
+        console.log("Child receiveSharesGate:", receiveSharesGate);
+        console.log("Child setReceiveSharesGate abdicated:", receiveSharesGateAbdicated);
+        console.log("Child sendSharesGate:", sendSharesGate);
+        console.log("Child setSendSharesGate abdicated:", sendSharesGateAbdicated);
+        console.log("Child receiveAssetsGate:", receiveAssetsGate);
+        console.log("Child setReceiveAssetsGate abdicated:", receiveAssetsGateAbdicated);
+        console.log("Child sendAssetsGate:", sendAssetsGate);
+        console.log("Child setSendAssetsGate abdicated:", sendAssetsGateAbdicated);
+        if (!childFullyNonCustodial) {
+            console.log("WARNING: FeeWrapperDeployer: child vault is not fully non-custodial");
+            require(!config.abdicateNonCriticalGates, "FeeWrapperDeployer: child vault is not fully non-custodial");
+        }
 
         // The broadcaster is the pinned deployer. It is part of the CREATE2 salt, so it fully
         // determines (together with the config) the fee wrapper's address.

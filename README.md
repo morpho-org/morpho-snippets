@@ -149,7 +149,7 @@ The deployer handles all setup atomically:
 2. Permanently locks the adapter configuration (addAdapter and removeAdapter are abdicated)
 3. Sets caps, liquidity routing, max rate, and force-deallocate penalty to recommended defaults
 4. Optionally configures performance fee, management fee, and fee recipient
-5. Optionally abdicates gate setters for non-custodial guarantees
+5. Optionally abdicates all four wrapper gate setters; this requires a fully non-custodial child vault
 6. Transfers ownership to the final owner (must be a safe wallet)
 
 Configurable parameters via `FeeWrapperConfig`:
@@ -157,7 +157,8 @@ Configurable parameters via `FeeWrapperConfig`:
 - `owner` / `salt` / `childVault` (required)
 - `name` / `symbol` (ERC20 metadata, settable later by owner)
 - `performanceFee` / `managementFee` / `feeRecipient` (optional, configurable later by curator)
-- `abdicateNonCriticalGates` (if true, permanently locks gates open for non-custodial operation)
+- `abdicateNonCriticalGates` (if true, permanently abdicates all four wrapper gate setters and requires a fully
+  non-custodial child vault)
 
 > [!IMPORTANT]
 > The child vault **must** be a Morpho Vault V2. The "MorphoVaultV1Adapter" name is a legacy artifact; the adapter is
@@ -165,7 +166,17 @@ Configurable parameters via `FeeWrapperConfig`:
 
 > [!NOTE]
 > For compliance use cases (KYC/AML), leave `abdicateNonCriticalGates = false` and configure gates later via the
-> curator + timelock mechanism.
+> curator + timelock mechanism. The wrapper is not fully non-custodial in this configuration.
+
+### Full non-custodiality
+
+With `abdicateNonCriticalGates = true`, all four wrapper gate setters are permanently abdicated, and deployment
+requires the child vault's four gates to be `address(0)` with all four setters abdicated. During an in-kind redemption,
+the depositor deposits assets into the child, the wrapper force-deallocates through its adapter, then the depositor
+withdraws from the wrapper. The child's gates govern both this deposit and the later exit from the child shares, so
+they must remain open and unchangeable. Compliance gates are supported with the flag set to false, but the wrapper is
+not fully non-custodial; the same applies whenever the child can still set gates. Integrators can check an existing
+child with `FeeWrapperDeployer.isChildVaultFullyNonCustodial(childVault)`.
 
 ### Deterministic address & front-running protection
 

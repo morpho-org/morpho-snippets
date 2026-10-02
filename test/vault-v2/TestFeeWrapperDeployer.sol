@@ -7,7 +7,15 @@ import {FeeWrapperDeployer} from "../../src/vault-v2/FeeWrapperDeployer.sol";
 import {IVaultV2} from "../../lib/vault-v2/src/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "../../lib/vault-v2/src/interfaces/IVaultV2Factory.sol";
 import {IERC20} from "../../lib/vault-v2/src/interfaces/IERC20.sol";
+import {ISendAssetsGate} from "../../lib/vault-v2/src/interfaces/IGate.sol";
+import {ErrorsLib} from "../../lib/vault-v2/src/libraries/ErrorsLib.sol";
 import {MAX_MAX_RATE, MAX_FORCE_DEALLOCATE_PENALTY, WAD} from "../../lib/vault-v2/src/libraries/ConstantsLib.sol";
+
+contract RejectAllSendAssetsGate is ISendAssetsGate {
+    function canSendAssets(address) external pure returns (bool) {
+        return false;
+    }
+}
 
 contract TestFeeWrapperDeployer is MorphoVaultV1IntegrationTest {
     FeeWrapperDeployer internal deployer;
@@ -43,6 +51,27 @@ contract TestFeeWrapperDeployer is MorphoVaultV1IntegrationTest {
 
     function _deployWrapper(FeeWrapperDeployer.FeeWrapperConfig memory config) internal returns (IVaultV2) {
         return IVaultV2(deployer.createFeeWrapper(address(vaultFactory), address(morphoVaultV1AdapterFactory), config));
+    }
+
+    function _setChildSendAssetsGate(address gate) internal {
+        vm.startPrank(curator);
+        vault.submit(abi.encodeCall(IVaultV2.setSendAssetsGate, (gate)));
+        vault.setSendAssetsGate(gate);
+        vm.stopPrank();
+    }
+
+    function _abdicateChildGate(bytes4 selector) internal {
+        vm.startPrank(curator);
+        vault.submit(abi.encodeCall(IVaultV2.abdicate, (selector)));
+        vault.abdicate(selector);
+        vm.stopPrank();
+    }
+
+    function _abdicateChildGates() internal {
+        _abdicateChildGate(IVaultV2.setReceiveSharesGate.selector);
+        _abdicateChildGate(IVaultV2.setSendSharesGate.selector);
+        _abdicateChildGate(IVaultV2.setReceiveAssetsGate.selector);
+        _abdicateChildGate(IVaultV2.setSendAssetsGate.selector);
     }
 
     // -----------------------------------------------------------------------
@@ -116,12 +145,13 @@ contract TestFeeWrapperDeployer is MorphoVaultV1IntegrationTest {
         config.abdicateNonCriticalGates = true;
         config.salt = bytes32(uint256(6));
 
+        _abdicateChildGates();
         IVaultV2 wrapper = _deployWrapper(config);
 
         assertTrue(wrapper.abdicated(IVaultV2.setReceiveSharesGate.selector), "receiveSharesGate abdicated");
         assertTrue(wrapper.abdicated(IVaultV2.setSendSharesGate.selector), "sendSharesGate abdicated");
         assertTrue(wrapper.abdicated(IVaultV2.setReceiveAssetsGate.selector), "receiveAssetsGate abdicated");
-        assertFalse(wrapper.abdicated(IVaultV2.setSendAssetsGate.selector), "sendAssetsGate NOT abdicated");
+        assertFalse(wrapper.abdicated(IVaultV2.setSendAssetsGate.selector), "wrapper sendAssetsGate stays configurable");
     }
 
     function testDeployFullConfig() public {
@@ -137,6 +167,7 @@ contract TestFeeWrapperDeployer is MorphoVaultV1IntegrationTest {
             abdicateNonCriticalGates: true
         });
 
+        _abdicateChildGates();
         IVaultV2 wrapper = _deployWrapper(config);
 
         assertEq(wrapper.owner(), owner, "owner");
@@ -207,6 +238,101 @@ contract TestFeeWrapperDeployer is MorphoVaultV1IntegrationTest {
         vm.stopPrank();
 
         assertApproxEqAbs(underlyingToken.balanceOf(DEPOSITOR), amount, 1, "got assets back");
+    }
+
+    function testIsChildVaultFullyNonCustodialFalseByDefault() public view {
+        assertFalse(deployer.isChildVaultFullyNonCustodial(address(vault)));
+    }
+
+    function testIsChildVaultFullyNonCustodialTrueAfterAbdicatingGates() public {
+        _abdicateChildGates();
+
+        assertTrue(deployer.isChildVaultFullyNonCustodial(address(vault)));
+    }
+
+    function testIsChildVaultFullyNonCustodialFalseWithNonzeroActiveGate() public {
+        _setChildSendAssetsGate(address(new RejectAllSendAssetsGate()));
+        _abdicateChildGate(IVaultV2.setReceiveSharesGate.selector);
+        _abdicateChildGate(IVaultV2.setSendSharesGate.selector);
+        _abdicateChildGate(IVaultV2.setReceiveAssetsGate.selector);
+
+        assertFalse(deployer.isChildVaultFullyNonCustodial(address(vault)));
+    }
+
+    function testIsChildVaultFullyNonCustodialFalseWithAbdicatedNonzeroGate() public {
+        _setChildSendAssetsGate(address(new RejectAllSendAssetsGate()));
+        _abdicateChildGates();
+
+        assertFalse(deployer.isChildVaultFullyNonCustodial(address(vault)));
+    }
+
+    function testGateAbdicationRevertsWhenChildSendAssetsGateIsSet() public {
+        _setChildSendAssetsGate(address(new RejectAllSendAssetsGate()));
+        FeeWrapperDeployer.FeeWrapperConfig memory config = _basicConfig();
+        config.abdicateNonCriticalGates = true;
+
+        vm.expectRevert("FeeWrapperDeployer: child vault is not fully non-custodial");
+        _deployWrapper(config);
+    }
+
+    function testGateAbdicationRevertsWhenChildSettersAreNotAbdicated() public {
+        FeeWrapperDeployer.FeeWrapperConfig memory config = _basicConfig();
+        config.abdicateNonCriticalGates = true;
+
+        vm.expectRevert("FeeWrapperDeployer: child vault is not fully non-custodial");
+        _deployWrapper(config);
+    }
+
+    function testGatedChildRejectsDepositWhenGateAbdicationIsDisabled() public {
+        address gate = address(new RejectAllSendAssetsGate());
+        _setChildSendAssetsGate(gate);
+
+        FeeWrapperDeployer.FeeWrapperConfig memory config = _basicConfig();
+        IVaultV2 wrapper = _deployWrapper(config);
+        assertFalse(wrapper.abdicated(IVaultV2.setSendAssetsGate.selector));
+
+        uint256 amount = 1e18;
+        deal(address(underlyingToken), DEPOSITOR, amount);
+        vm.startPrank(DEPOSITOR);
+        underlyingToken.approve(address(vault), amount);
+        vm.expectRevert(ErrorsLib.CannotSendAssets.selector);
+        vault.deposit(amount, DEPOSITOR);
+        vm.stopPrank();
+    }
+
+    function testInKindRedemptionLeavesDepositorWithChildShares() public {
+        _abdicateChildGates();
+        FeeWrapperDeployer.FeeWrapperConfig memory config = _basicConfig();
+        config.abdicateNonCriticalGates = true;
+        IVaultV2 wrapper = _deployWrapper(config);
+
+        uint256 assets = 1e18;
+        deal(address(underlyingToken), DEPOSITOR, assets);
+        vm.startPrank(DEPOSITOR);
+        underlyingToken.approve(address(wrapper), assets);
+        wrapper.deposit(assets, DEPOSITOR);
+        vm.stopPrank();
+
+        uint256 wrapperSharesBefore = wrapper.balanceOf(DEPOSITOR);
+        address adapter = wrapper.adapters(0);
+
+        deal(address(underlyingToken), DEPOSITOR, assets);
+        vm.startPrank(DEPOSITOR);
+        underlyingToken.approve(address(vault), assets);
+        vault.deposit(assets, DEPOSITOR);
+        wrapper.forceDeallocate(adapter, hex"", assets, DEPOSITOR);
+        uint256 penaltyAssets = assets * MAX_FORCE_DEALLOCATE_PENALTY / WAD;
+        wrapper.withdraw(assets - penaltyAssets, DEPOSITOR, DEPOSITOR);
+        vm.stopPrank();
+
+        assertLt(wrapper.balanceOf(DEPOSITOR), wrapperSharesBefore, "wrapper shares decreased");
+        assertApproxEqAbs(wrapper.balanceOf(DEPOSITOR), 0, 1, "wrapper shares redeemed");
+        assertApproxEqAbs(
+            vault.convertToAssets(vault.balanceOf(DEPOSITOR)),
+            assets,
+            penaltyAssets,
+            "depositor retains child shares near deposited value"
+        );
     }
 
     function testRevertNonV2ChildVault() public {

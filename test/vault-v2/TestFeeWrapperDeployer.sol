@@ -151,7 +151,7 @@ contract TestFeeWrapperDeployer is MorphoVaultV1IntegrationTest {
         assertTrue(wrapper.abdicated(IVaultV2.setReceiveSharesGate.selector), "receiveSharesGate abdicated");
         assertTrue(wrapper.abdicated(IVaultV2.setSendSharesGate.selector), "sendSharesGate abdicated");
         assertTrue(wrapper.abdicated(IVaultV2.setReceiveAssetsGate.selector), "receiveAssetsGate abdicated");
-        assertTrue(wrapper.abdicated(IVaultV2.setSendAssetsGate.selector), "sendAssetsGate abdicated");
+        assertFalse(wrapper.abdicated(IVaultV2.setSendAssetsGate.selector), "wrapper sendAssetsGate stays configurable");
     }
 
     function testDeployFullConfig() public {

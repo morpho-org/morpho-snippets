@@ -149,7 +149,7 @@ The deployer handles all setup atomically:
 2. Permanently locks the adapter configuration (addAdapter and removeAdapter are abdicated)
 3. Sets caps, liquidity routing, max rate, and force-deallocate penalty to recommended defaults
 4. Optionally configures performance fee, management fee, and fee recipient
-5. Optionally abdicates all four wrapper gate setters; this requires a fully non-custodial child vault
+5. Optionally abdicates the wrapper's three critical gate setters; this requires a fully non-custodial child vault
 6. Transfers ownership to the final owner (must be a safe wallet)
 
 Configurable parameters via `FeeWrapperConfig`:
@@ -157,8 +157,9 @@ Configurable parameters via `FeeWrapperConfig`:
 - `owner` / `salt` / `childVault` (required)
 - `name` / `symbol` (ERC20 metadata, settable later by owner)
 - `performanceFee` / `managementFee` / `feeRecipient` (optional, configurable later by curator)
-- `abdicateNonCriticalGates` (if true, permanently abdicates all four wrapper gate setters and requires a fully
-  non-custodial child vault)
+- `abdicateNonCriticalGates` (if true, permanently abdicates the wrapper's three critical gate setters and requires a
+  fully non-custodial child vault; the wrapper's `sendAssetsGate` remains configurable because it only restricts who
+  can deposit into the wrapper)
 
 > [!IMPORTANT]
 > The child vault **must** be a Morpho Vault V2. The "MorphoVaultV1Adapter" name is a legacy artifact; the adapter is
@@ -170,13 +171,15 @@ Configurable parameters via `FeeWrapperConfig`:
 
 ### Full non-custodiality
 
-With `abdicateNonCriticalGates = true`, all four wrapper gate setters are permanently abdicated, and deployment
-requires the child vault's four gates to be `address(0)` with all four setters abdicated. During an in-kind redemption,
-the depositor deposits assets into the child, the wrapper force-deallocates through its adapter, then the depositor
-withdraws from the wrapper. The child's gates govern both this deposit and the later exit from the child shares, so
-they must remain open and unchangeable. Compliance gates are supported with the flag set to false, but the wrapper is
-not fully non-custodial; the same applies whenever the child can still set gates. Integrators can check an existing
-child with `FeeWrapperDeployer.isChildVaultFullyNonCustodial(childVault)`.
+With `abdicateNonCriticalGates = true`, the wrapper's three critical gate setters (`receiveShares`, `sendShares`, and
+`receiveAssets`) are permanently abdicated. The wrapper's `sendAssetsGate` remains configurable because it only
+restricts who can deposit into the wrapper. Deployment requires all four child gates to be `address(0)` with all four
+setters abdicated. During an in-kind redemption, the depositor deposits assets into the child before the wrapper
+force-deallocates through its adapter and the depositor withdraws from the wrapper. The child's `sendAssetsGate`
+controls the deposit into the child and must remain open and unchangeable; the child's other gates govern the deposit
+and later exit from the child shares. Compliance gates are supported with the flag set to false, but the wrapper is not
+fully non-custodial; the same applies whenever the child can still set gates. Integrators can check an existing child
+with `FeeWrapperDeployer.isChildVaultFullyNonCustodial(childVault)`.
 
 ### Deterministic address & front-running protection
 

@@ -64,18 +64,23 @@ import {MAX_MAX_RATE, MAX_FORCE_DEALLOCATE_PENALTY, WAD} from "../../lib/vault-v
 ///   - performanceFee:            Performance fee (in WAD, max 50%). Set to 0 to skip.
 ///   - managementFee:             Management fee (in WAD per second, max ~5% APR). Set to 0 to skip.
 ///   - feeRecipient:              The address receiving both performance and management fees
-///   - abdicateNonCriticalGates:  If true, permanently abdicates all four wrapper gate setters and requires the
-///                                child vault to be fully non-custodial. See "Gates & Non-Custodiality" below.
+///   - abdicateNonCriticalGates:  If true, permanently abdicates the wrapper's three critical gate setters and
+///                                requires the child vault to be fully non-custodial. The wrapper's sendAssetsGate
+///                                remains configurable because it only restricts new wrapper deposits. The child's
+///                                sendAssetsGate must be open and abdicated because in-kind redemptions deposit into
+///                                the child. See "Gates & Non-Custodiality" below.
 ///
 /// ---- Gates & Non-Custodiality ----
 ///
 ///   By default, all four gates are set to address(0) (disabled / permissionless).
 ///
-///   When abdicateNonCriticalGates is true, all four wrapper gate setters are permanently abdicated, and deployment
-///   requires the child vault to have all four gates set to address(0) with all four setters abdicated. During an
-///   in-kind redemption, the depositor deposits assets into the child vault, the wrapper force-deallocates through its
-///   adapter, and the depositor withdraws from the wrapper. The child gates govern the deposit and the later exit from
-///   the child shares, so they must remain open and unchangeable for the wrapper to be fully non-custodial.
+///   When abdicateNonCriticalGates is true, the wrapper's three critical gate setters (receiveShares, sendShares, and
+///   receiveAssets) are permanently abdicated. Its sendAssetsGate remains configurable because it only restricts who
+///   can deposit into the wrapper. Deployment requires all four child gates to be address(0) and all four child gate
+///   setters to be abdicated. During an in-kind redemption, the depositor deposits assets into the child vault, the
+///   wrapper force-deallocates through its adapter, and the depositor withdraws from the wrapper. The child's
+///   sendAssetsGate controls the deposit into the child and must remain open and unchangeable; its other gates govern
+///   the deposit and later exit from the child shares.
 ///
 ///   For compliance use cases (e.g. KYC/AML allowlists), leave abdicateNonCriticalGates false and configure gates as
 ///   required. The wrapper is then not fully non-custodial; the same is true whenever the child vault can still set
@@ -177,8 +182,10 @@ contract FeeWrapperDeployer {
         uint256 managementFee; // Management fee in WAD/second (e.g. ~1.585e9 for ~5% APR). Set to 0 to skip.
         address feeRecipient; // Address receiving fees. Required if either fee > 0.
         // ---- Gate abdication option ----
-        bool abdicateNonCriticalGates; // If true, abdicate all four wrapper gate setters and require a fully
-        // non-custodial child.
+        bool abdicateNonCriticalGates; // If true, abdicate the three critical wrapper gate setters and require a
+        // fully non-custodial child. The wrapper's sendAssetsGate stays configurable because it only restricts who
+        // can deposit into the wrapper; the child's sendAssetsGate must be abdicated because in-kind redemptions
+        // deposit into the child.
     }
 
     /// @notice Deploys and fully configures a fee wrapper VaultV2.
@@ -345,8 +352,10 @@ contract FeeWrapperDeployer {
         // =====================================================================
         //  PHASE 8: OPTIONAL GATE ABDICATION (curator functions: submit + execute)
         //
-        //  When enabled, permanently abdicate all four wrapper gate setters. Deployment
-        //  requires the child vault's four gates to be open and their setters abdicated.
+        //  When enabled, permanently abdicate the wrapper's three critical gate setters.
+        //  Its sendAssetsGate stays configurable because it only restricts new wrapper deposits.
+        //  The child's sendAssetsGate controls the in-kind redemption deposit into the child,
+        //  so deployment requires all four child gates to be open and their setters abdicated.
         //  Set the flag to false for configurations that need gates for compliance.
         // =====================================================================
 
@@ -359,9 +368,6 @@ contract FeeWrapperDeployer {
 
             IVaultV2(vault).submit(abi.encodeCall(IVaultV2.abdicate, (IVaultV2.setReceiveAssetsGate.selector)));
             IVaultV2(vault).abdicate(IVaultV2.setReceiveAssetsGate.selector);
-
-            IVaultV2(vault).submit(abi.encodeCall(IVaultV2.abdicate, (IVaultV2.setSendAssetsGate.selector)));
-            IVaultV2(vault).abdicate(IVaultV2.setSendAssetsGate.selector);
         }
 
         // =====================================================================
